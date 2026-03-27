@@ -18,6 +18,7 @@ from agent.identity import SYSTEM_PROMPT, TOOL_DECLARATIONS
 from agent.router import route_tool_call
 from memory.session_memory import SessionMemory
 from memory.persistent_memory import PersistentMemory
+from agent.decorators import with_api_failover
 
 def _format_tools_for_gemini():
     """
