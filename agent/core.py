@@ -86,11 +86,11 @@ class MediAssistAgent:
         # 5. Start the chat session
         self._chat = self.model.start_chat(history=gemini_history)
 
+    @with_api_failover
     def chat(self, user_message: str, uploaded_file=None) -> str:
         """
         Send a message (and an optional file), handle any tool calls loop, and get the final text response.
         """
-        from google.api_core import exceptions as google_exceptions
         import tempfile
         import os
         from PIL import Image
@@ -99,103 +99,83 @@ class MediAssistAgent:
         memory_text = user_message + (f"\n[User attached file: {uploaded_file.name}]" if uploaded_file else "")
         self.session_memory.add_message("user", memory_text)
 
-        try:
-            # Prepare the message parts for Gemini
-            message_parts = [user_message]
+        # Prepare the message parts for Gemini
+        message_parts = [user_message]
 
-            if uploaded_file:
-                # If it's an image, Gemini can read it directly from memory via PIL
-                if uploaded_file.name.lower().endswith(('.png', '.jpg', '.jpeg')):
-                    img = Image.open(uploaded_file)
-                    message_parts.append(img)
-                # If it's a PDF, we must use the Google File API
-                elif uploaded_file.name.lower().endswith('.pdf'):
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-                        tmp.write(uploaded_file.getvalue())
-                        tmp_path = tmp.name
-                    
-                    # Upload the PDF to Google's servers so Gemini can read it
-                    genai_file = genai.upload_file(path=tmp_path)
-                    message_parts.append(genai_file)
-                    
-                    # Delete the local temp file to save space
-                    os.unlink(tmp_path)
-
-            # Send it to Gemini
-            response = self._chat.send_message(message_parts)
-
-            # ─── MIGHT NEED A TOOL LOOP ───
-            # Gemini 2.x also supports "Parallel Function Calling" (doing 2 tools at once!)
-            while True:
-                # 1. Gather all function calls Gemini wants us to run right now
-                tool_responses = []
+        if uploaded_file:
+            # If it's an image, Gemini can read it directly from memory via PIL
+            if uploaded_file.name.lower().endswith(('.png', '.jpg', '.jpeg')):
+                img = Image.open(uploaded_file)
+                message_parts.append(img)
+            # If it's a PDF, we must use the Google File API
+            elif uploaded_file.name.lower().endswith('.pdf'):
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+                    tmp.write(uploaded_file.getvalue())
+                    tmp_path = tmp.name
                 
-                for part in response.candidates[0].content.parts:
-                    if hasattr(part, "function_call") and getattr(part.function_call, "name", ""):
-                        fn_call = part.function_call
-                        fn_name = fn_call.name
-                        fn_args = dict(fn_call.args)
-                        
-                        print(f"  [Agent is using tool: {fn_name} ...]")
-                        
-                        # Run the tool!
-                        tool_result_json_str = route_tool_call(fn_name, fn_args)
-                        
-                        # Package the result for Gemini
-                        tool_responses.append(
-                            genai.protos.Part(
-                                function_response=genai.protos.FunctionResponse(
-                                    name=fn_name,
-                                    response={"result": tool_result_json_str}
-                                )
+                # Upload the PDF to Google's servers so Gemini can read it
+                genai_file = genai.upload_file(path=tmp_path)
+                message_parts.append(genai_file)
+                
+                # Delete the local temp file to save space
+                os.unlink(tmp_path)
+
+        # Send it to Gemini
+        response = self._chat.send_message(message_parts)
+
+        # ─── TOOL LOOP ───
+        while True:
+            # 1. Gather all function calls Gemini wants us to run right now
+            tool_responses = []
+            
+            for part in response.candidates[0].content.parts:
+                if hasattr(part, "function_call") and getattr(part.function_call, "name", ""):
+                    fn_call = part.function_call
+                    fn_name = fn_call.name
+                    fn_args = dict(fn_call.args)
+                    
+                    print(f"  [Agent is using tool: {fn_name} ...]")
+                    
+                    # Run the tool!
+                    tool_result_json_str = route_tool_call(fn_name, fn_args)
+                    
+                    # Package the result for Gemini
+                    tool_responses.append(
+                        genai.protos.Part(
+                            function_response=genai.protos.FunctionResponse(
+                                name=fn_name,
+                                response={"result": tool_result_json_str}
                             )
                         )
-
-                # 2. Did we find any tools to run?
-                if tool_responses:
-                    # Send ALL the tool results back to Gemini at the exact same time
-                    response = self._chat.send_message(
-                        genai.protos.Content(
-                            role="tool",
-                            parts=tool_responses
-                        )
                     )
-                else:
-                    # No more tools. Gemini just gave us a text string. The loop is done!
-                    break
 
-            # Safely extract text (bypasses SDK ValueError if model hallucinates an empty function_call part alongside the text)
-            text_parts = []
-            for p in response.candidates[0].content.parts:
-                # Check if this part contains valid text
-                if hasattr(p, "text") and getattr(p, "text", ""):
-                    text_parts.append(p.text)
-                    
-            final_answer = " ".join(text_parts) if text_parts else "Done."
+            # 2. Did we find any tools to run?
+            if tool_responses:
+                # Send ALL the tool results back to Gemini at the exact same time
+                response = self._chat.send_message(
+                    genai.protos.Content(
+                        role="tool",
+                        parts=tool_responses
+                    )
+                )
+            else:
+                # No more tools. Gemini just gave us a text string. The loop is done!
+                break
 
-            # Save the final text and flush short-term memory to long-term memory file
-            self.session_memory.add_message("model", final_answer)
-            self.persistent_memory.save_session(self.session_memory.get_history())
+        # Safely extract text (bypasses SDK ValueError if model hallucinates an empty function_call part alongside the text)
+        text_parts = []
+        for p in response.candidates[0].content.parts:
+            # Check if this part contains valid text
+            if hasattr(p, "text") and getattr(p, "text", ""):
+                text_parts.append(p.text)
+                
+        final_answer = " ".join(text_parts) if text_parts else "Done."
 
-            return final_answer
-            
-        except google_exceptions.ResourceExhausted:
-            # ─── MULTI-PROVIDER FALLBACK ROUTER ───
-            # Gemini is out of quota! We will seamlessly failover to Groq 
-            # to guarantee the Agent stays alive.
-            print("  ⚠️ [Agent Core] Gemini Quota hit. Rerouting brain to Groq fallback...")
-            from agent.llm_client import run_groq_fallback
-            
-            fallback_answer = run_groq_fallback(self.session_memory.get_history(), user_message)
-            
-            self.session_memory.add_message("model", fallback_answer)
-            self.persistent_memory.save_session(self.session_memory.get_history())
-            return fallback_answer
-            
-        except Exception as e:
-            error_msg = f"⚠️ **System Error:** I encountered an unexpected issue while thinking.\n\n`{str(e)}`"
-            self.session_memory.add_message("model", error_msg)
-            return error_msg
+        # Save the final text and flush short-term memory to long-term memory file
+        self.session_memory.add_message("model", final_answer)
+        self.persistent_memory.save_session(self.session_memory.get_history())
+
+        return final_answer
 
     def reset_session(self):
         """Wipes the short term memory to start a fresh conversation."""
