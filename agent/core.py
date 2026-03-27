@@ -86,18 +86,43 @@ class MediAssistAgent:
         # 5. Start the chat session
         self._chat = self.model.start_chat(history=gemini_history)
 
-    def chat(self, user_message: str) -> str:
+    def chat(self, user_message: str, uploaded_file=None) -> str:
         """
-        Send a message, handle any tool calls loop, and get the final text response.
+        Send a message (and an optional file), handle any tool calls loop, and get the final text response.
         """
         from google.api_core import exceptions as google_exceptions
+        import tempfile
+        import os
+        from PIL import Image
         
-        # Save user message to short-term memory
-        self.session_memory.add_message("user", user_message)
+        # Save user message to short-term memory (we just append a text note if a file was attached)
+        memory_text = user_message + (f"\n[User attached file: {uploaded_file.name}]" if uploaded_file else "")
+        self.session_memory.add_message("user", memory_text)
 
         try:
+            # Prepare the message parts for Gemini
+            message_parts = [user_message]
+
+            if uploaded_file:
+                # If it's an image, Gemini can read it directly from memory via PIL
+                if uploaded_file.name.lower().endswith(('.png', '.jpg', '.jpeg')):
+                    img = Image.open(uploaded_file)
+                    message_parts.append(img)
+                # If it's a PDF, we must use the Google File API
+                elif uploaded_file.name.lower().endswith('.pdf'):
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+                        tmp.write(uploaded_file.getvalue())
+                        tmp_path = tmp.name
+                    
+                    # Upload the PDF to Google's servers so Gemini can read it
+                    genai_file = genai.upload_file(path=tmp_path)
+                    message_parts.append(genai_file)
+                    
+                    # Delete the local temp file to save space
+                    os.unlink(tmp_path)
+
             # Send it to Gemini
-            response = self._chat.send_message(user_message)
+            response = self._chat.send_message(message_parts)
 
             # ─── MIGHT NEED A TOOL LOOP ───
             # Gemini 2.x also supports "Parallel Function Calling" (doing 2 tools at once!)

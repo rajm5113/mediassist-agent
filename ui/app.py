@@ -67,20 +67,25 @@ for msg in agent.session_memory.get_history():
         st.markdown(msg["content"])
 
 # ─── 5. USER INPUT BLOCK ───
+# Allow uploading medical reports
+uploaded_file = st.sidebar.file_uploader("📄 Upload Medical Report (PDF/Image)", type=["pdf", "png", "jpg", "jpeg"])
+
 # st.chat_input waits for the user to type something and hit Enter
-user_text = st.chat_input("Ask about a medication, or log a symptom...")
+user_text = st.chat_input("Ask about a medication, log a symptom, or discuss the uploaded file...")
 
 # If the user typed something:
 if user_text:
     # A. Draw the user's message on the screen immediately
     with st.chat_message("user"):
         st.markdown(user_text)
+        if uploaded_file:
+            st.caption(f"📎 Attached: {uploaded_file.name}")
 
     # B. Show a spinning loading icon while the Brain thinks
     with st.chat_message("assistant"):
-        with st.spinner("Thinking (and maybe running tools)..."):
-            # C. Send the text to our Agent Core!
-            reply = agent.chat(user_text)
+        with st.spinner("Thinking (and maybe reading your file/running tools)..."):
+            # C. Send the text and the file to our Agent Core!
+            reply = agent.chat(user_text, uploaded_file=uploaded_file)
             
         # D. The Brain is done. Draw the final answer on the screen.
         st.markdown(reply)
