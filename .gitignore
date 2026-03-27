@@ -1,0 +1,17 @@
+# .gitignore — tells Git to IGNORE these files/folders
+# (they should never be uploaded to GitHub)
+
+# Secret keys — NEVER share this!
+.env
+
+# Virtual environment — huge folder, no need to upload
+.venv/
+
+# Python bytecode — auto-generated, not needed
+__pycache__/
+**/__pycache__/
+*.pyc
+
+# Our local data files (personal health data stays private)
+data/memory_store.json
+data/session_log.json

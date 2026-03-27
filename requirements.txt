@@ -1,0 +1,7 @@
+# These are the libraries our project needs.
+# Install them with: .venv\Scripts\pip install -r requirements.txt
+
+google-generativeai>=0.7.0   # Gemini API — the AI brain
+streamlit>=1.35.0             # Web UI — turns Python into a web app
+requests>=2.31.0              # Makes HTTP calls to the OpenFDA API
+python-dotenv>=1.0.0          # Reads our API key from the .env file
