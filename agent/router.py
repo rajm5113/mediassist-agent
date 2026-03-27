@@ -20,6 +20,7 @@ from tools.drug_lookup import lookup_drug
 from tools.symptom_logger import log_symptom
 from tools.medication_reminder import set_medication_reminder, list_reminders
 from tools.health_summary import generate_health_summary
+from tools.interaction_checker import check_drug_interaction
 
 
 def route_tool_call(function_name: str, function_args: Dict[str, Any]) -> str:
@@ -31,6 +32,12 @@ def route_tool_call(function_name: str, function_args: Dict[str, Any]) -> str:
         if function_name == "lookup_drug":
             # Pass the drug_name argument to our function
             result = lookup_drug(function_args["drug_name"])
+
+        elif function_name == "check_drug_interaction":
+            result = check_drug_interaction(
+                drug1=function_args["drug1"],
+                drug2=function_args["drug2"]
+            )
 
         elif function_name == "log_symptom":
             # Pass symptom, severity, and notes

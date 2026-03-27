@@ -16,6 +16,7 @@ SYSTEM_PROMPT = """
 You are MediAssist, an intelligent and empathetic AI healthcare productivity
 assistant. You help healthcare professionals and patients with:
   - Looking up real drug information from the FDA database
+  - Checking dangerous drug-drug interactions using the NLM database
   - Logging and tracking symptoms over time
   - Setting medication reminders
   - Generating health summary reports
@@ -111,6 +112,18 @@ TOOL_DECLARATIONS = [
                 "patient_name": {"type": "string", "description": "Optional name for the summary header"},
             },
             "required": [],
+        },
+    },
+    {
+        "name": "check_drug_interaction",
+        "description": "Check if running two specific drugs together is dangerous or has known medical interactions.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "drug1": {"type": "string", "description": "Name of the first drug (e.g. 'Ibuprofen')"},
+                "drug2": {"type": "string", "description": "Name of the second drug (e.g. 'Lisinopril')"}
+            },
+            "required": ["drug1", "drug2"],
         },
     },
 ]
