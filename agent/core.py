@@ -90,69 +90,79 @@ class MediAssistAgent:
         """
         Send a message, handle any tool calls loop, and get the final text response.
         """
+        from google.api_core import exceptions as google_exceptions
+        
         # Save user message to short-term memory
         self.session_memory.add_message("user", user_message)
 
-        # Send it to Gemini
-        response = self._chat.send_message(user_message)
+        try:
+            # Send it to Gemini
+            response = self._chat.send_message(user_message)
 
-        # ─── MIGHT NEED A TOOL LOOP ───
-        # Gemini might say "Call lookup_drug". We run it, send data back. 
-        # Then Gemini might say "Now call log_symptom". 
-        # So we loop until Gemini gives us a plain text final answer.
-        # Gemini 2.x also supports "Parallel Function Calling" (doing 2 tools at once!)
-        while True:
-            # 1. Gather all function calls Gemini wants us to run right now
-            tool_responses = []
-            
-            for part in response.candidates[0].content.parts:
-                if hasattr(part, "function_call") and getattr(part.function_call, "name", ""):
-                    fn_call = part.function_call
-                    fn_name = fn_call.name
-                    fn_args = dict(fn_call.args)
-                    
-                    print(f"  [Agent is using tool: {fn_name} ...]")
-                    
-                    # Run the tool!
-                    tool_result_json_str = route_tool_call(fn_name, fn_args)
-                    
-                    # Package the result for Gemini
-                    tool_responses.append(
-                        genai.protos.Part(
-                            function_response=genai.protos.FunctionResponse(
-                                name=fn_name,
-                                response={"result": tool_result_json_str}
+            # ─── MIGHT NEED A TOOL LOOP ───
+            # Gemini 2.x also supports "Parallel Function Calling" (doing 2 tools at once!)
+            while True:
+                # 1. Gather all function calls Gemini wants us to run right now
+                tool_responses = []
+                
+                for part in response.candidates[0].content.parts:
+                    if hasattr(part, "function_call") and getattr(part.function_call, "name", ""):
+                        fn_call = part.function_call
+                        fn_name = fn_call.name
+                        fn_args = dict(fn_call.args)
+                        
+                        print(f"  [Agent is using tool: {fn_name} ...]")
+                        
+                        # Run the tool!
+                        tool_result_json_str = route_tool_call(fn_name, fn_args)
+                        
+                        # Package the result for Gemini
+                        tool_responses.append(
+                            genai.protos.Part(
+                                function_response=genai.protos.FunctionResponse(
+                                    name=fn_name,
+                                    response={"result": tool_result_json_str}
+                                )
                             )
                         )
+
+                # 2. Did we find any tools to run?
+                if tool_responses:
+                    # Send ALL the tool results back to Gemini at the exact same time
+                    response = self._chat.send_message(
+                        genai.protos.Content(
+                            role="tool",
+                            parts=tool_responses
+                        )
                     )
+                else:
+                    # No more tools. Gemini just gave us a text string. The loop is done!
+                    break
 
-            # 2. Did we find any tools to run?
-            if tool_responses:
-                # Send ALL the tool results back to Gemini at the exact same time
-                response = self._chat.send_message(
-                    genai.protos.Content(
-                        role="tool",
-                        parts=tool_responses
-                    )
-                )
-            else:
-                # No more tools. Gemini just gave us a text string. The loop is done!
-                break
+            # Safely extract text (bypasses SDK ValueError if model hallucinates an empty function_call part alongside the text)
+            text_parts = []
+            for p in response.candidates[0].content.parts:
+                # Check if this part contains valid text
+                if hasattr(p, "text") and getattr(p, "text", ""):
+                    text_parts.append(p.text)
+                    
+            final_answer = " ".join(text_parts) if text_parts else "Done."
 
-        # Safely extract text (bypasses SDK ValueError if model hallucinates an empty function_call part alongside the text)
-        text_parts = []
-        for p in response.candidates[0].content.parts:
-            # Check if this part contains valid text
-            if hasattr(p, "text") and getattr(p, "text", ""):
-                text_parts.append(p.text)
-                
-        final_answer = " ".join(text_parts) if text_parts else "Done."
+            # Save the final text and flush short-term memory to long-term memory file
+            self.session_memory.add_message("model", final_answer)
+            self.persistent_memory.save_session(self.session_memory.get_history())
 
-        # Save the final text and flush short-term memory to long-term memory file
-        self.session_memory.add_message("model", final_answer)
-        self.persistent_memory.save_session(self.session_memory.get_history())
-
-        return final_answer
+            return final_answer
+            
+        except google_exceptions.ResourceExhausted:
+            error_msg = "⚠️ **Oops!** I'm currently experiencing high traffic and have hit my free-tier limit. Please wait a minute and try again!"
+            self.session_memory.add_message("model", error_msg)
+            return error_msg
+            
+        except Exception as e:
+            error_msg = f"⚠️ **System Error:** I encountered an unexpected issue while thinking.\n\n`{str(e)}`"
+            self.session_memory.add_message("model", error_msg)
+            return error_msg
 
     def reset_session(self):
         """Wipes the short term memory to start a fresh conversation."""
