@@ -180,9 +180,17 @@ class MediAssistAgent:
             return final_answer
             
         except google_exceptions.ResourceExhausted:
-            error_msg = "⚠️ **Oops!** I'm currently experiencing high traffic and have hit my free-tier limit. Please wait a minute and try again!"
-            self.session_memory.add_message("model", error_msg)
-            return error_msg
+            # ─── MULTI-PROVIDER FALLBACK ROUTER ───
+            # Gemini is out of quota! We will seamlessly failover to Groq 
+            # to guarantee the Agent stays alive.
+            print("  ⚠️ [Agent Core] Gemini Quota hit. Rerouting brain to Groq fallback...")
+            from agent.llm_client import run_groq_fallback
+            
+            fallback_answer = run_groq_fallback(self.session_memory.get_history(), user_message)
+            
+            self.session_memory.add_message("model", fallback_answer)
+            self.persistent_memory.save_session(self.session_memory.get_history())
+            return fallback_answer
             
         except Exception as e:
             error_msg = f"⚠️ **System Error:** I encountered an unexpected issue while thinking.\n\n`{str(e)}`"

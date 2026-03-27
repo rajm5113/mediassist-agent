@@ -19,7 +19,11 @@ from dotenv import load_dotenv
 load_dotenv()  # This reads .env and makes variables available via os.getenv()
 
 # ── API Keys ─────────────────────────────────────────────────────────────────
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+GEMINI_API_KEY     = os.getenv("GEMINI_API_KEY", "")
+
+# We add placeholders for the Fallback APIs
+GROQ_API_KEY       = os.getenv("GROQ_API_KEY", "")
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 
 # ── Model Settings ───────────────────────────────────────────────────────────
 MODEL_NAME        = "gemini-2.5-flash"   # Which Gemini model to use
