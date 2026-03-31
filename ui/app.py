@@ -60,12 +60,13 @@ with st.sidebar:
     # ─── MODEL SELECTOR ───
     st.subheader("🧠 AI Model")
 
-    # Each option maps to: (provider, model_id)
+    # Each option maps to: (provider, model_id, supports_tools)
+    # supports_tools=False → skip tool calling (plain chat only)
     MODEL_OPTIONS = {
-        "🔮 Gemini 2.5 Flash (Default)": ("gemini", None),
-        "⚡ Groq — Llama 3.3 70B": ("groq", "llama-3.3-70b-versatile"),
-        "🚀 Groq — Llama 3.1 8B (Fast)": ("groq", "llama-3.1-8b-instant"),
-        "🌐 OpenRouter — Llama 3 8B (Free)": ("openrouter", "meta-llama/llama-3-8b-instruct:free"),
+        "🔮 Gemini 2.5 Flash (Default)": ("gemini", None, True),
+        "⚡ Groq — Llama 3.3 70B":        ("groq", "llama-3.3-70b-versatile", True),
+        "🚀 Groq — Llama 3.1 8B (Fast)":  ("groq", "llama-3.1-8b-instant", True),
+        "🌐 OpenRouter — Llama 3 8B (Free)": ("openrouter", "meta-llama/llama-3-8b-instruct:free", False),
     }
 
     selected_model_label = st.selectbox(
@@ -74,7 +75,10 @@ with st.sidebar:
         index=0,
         help="Switch between AI providers without restarting the app."
     )
-    selected_provider, selected_model_id = MODEL_OPTIONS[selected_model_label]
+    selected_provider, selected_model_id, selected_supports_tools = MODEL_OPTIONS[selected_model_label]
+
+    if not selected_supports_tools:
+        st.caption("⚠️ This model is in plain-chat mode (tool calling not supported).")
 
     st.write("---")
 
@@ -175,26 +179,32 @@ if user_text:
     # B. Show a spinning loading icon while the Brain thinks
     with st.chat_message("assistant"):
         with st.spinner(f"Thinking with {selected_model_label}..."):
-            # ─ Route to the selected model ─
-            if selected_provider == "gemini":
-                reply = agent.chat(user_text, uploaded_file=uploaded_file)
-            elif selected_provider == "groq":
-                reply = run_groq_fallback(
-                    agent.session_memory.get_history(),
-                    user_text,
-                    model=selected_model_id
-                )
-                # Save to memory so the chat history stays consistent
-                agent.session_memory.add_message("user", user_text)
-                agent.session_memory.add_message("model", reply)
-            elif selected_provider == "openrouter":
-                reply = run_openrouter_fallback(
-                    agent.session_memory.get_history(),
-                    user_text,
-                    model=selected_model_id
-                )
-                agent.session_memory.add_message("user", user_text)
-                agent.session_memory.add_message("model", reply)
+            try:
+                # ─ Route to the selected model ─
+                if selected_provider == "gemini":
+                    reply = agent.chat(user_text, uploaded_file=uploaded_file)
+
+                elif selected_provider == "groq":
+                    reply = run_groq_fallback(
+                        agent.session_memory.get_history(),
+                        user_text,
+                        model=selected_model_id
+                    )
+                    agent.session_memory.add_message("user", user_text)
+                    agent.session_memory.add_message("model", reply)
+
+                elif selected_provider == "openrouter":
+                    reply = run_openrouter_fallback(
+                        agent.session_memory.get_history(),
+                        user_text,
+                        model=selected_model_id,
+                        supports_tools=selected_supports_tools
+                    )
+                    agent.session_memory.add_message("user", user_text)
+                    agent.session_memory.add_message("model", reply)
+
+            except Exception as e:
+                reply = f"⚠️ **Error ({selected_model_label}):** `{str(e)}`\n\nTry switching to a different model from the sidebar."
 
         # D. Draw the final answer on screen
         st.markdown(reply)

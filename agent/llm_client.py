@@ -92,15 +92,16 @@ def run_groq_fallback(session_history, user_message: str, model: str = "llama-3.
     return "⚠️ **Groq Error:** Model reached max tool-call turns."
 
 
-def run_openrouter_fallback(session_history, user_message: str, model: str = "meta-llama/llama-3-8b-instruct:free") -> str:
+def run_openrouter_fallback(session_history, user_message: str, model: str = "meta-llama/llama-3-8b-instruct:free", supports_tools: bool = True) -> str:
     """
     Connects to OpenRouter. Accepts any OpenRouter model string.
+    supports_tools=False → plain chat mode (for free models that can't handle tool schemas).
     """
     if not config.OPENROUTER_API_KEY:
         raise Exception("OpenRouter API key not found in .env")
 
     client = OpenAI(api_key=config.OPENROUTER_API_KEY, base_url="https://openrouter.ai/api/v1")
-    print(f"  [OpenRouter] Using model: {model}")
+    print(f"  [OpenRouter] Using model: {model} | tools: {supports_tools}")
 
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     for msg in session_history:
@@ -109,6 +110,16 @@ def run_openrouter_fallback(session_history, user_message: str, model: str = "me
         
     messages.append({"role": "user", "content": user_message})
 
+    # ── Plain chat mode (no tools) — for free/limited models ──
+    if not supports_tools:
+        response = client.chat.completions.create(
+            model=model,
+            messages=messages,
+            temperature=config.TEMPERATURE
+        )
+        return response.choices[0].message.content or "Done."
+
+    # ── Full tool-calling mode ──
     max_turns = 5
     for _ in range(max_turns):
         response = client.chat.completions.create(
