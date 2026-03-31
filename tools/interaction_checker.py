@@ -11,57 +11,40 @@ import json
 import requests
 
 def check_drug_interaction(drug1: str, drug2: str) -> str:
-    """Checks the NLM API for dangerous interactions between two drugs."""
+    """Checks for dangerous interactions between two drugs using a local database."""
     try:
-        # Step 1: We first must convert the plain English drug names into "RxCUI" codes
-        # because the interaction API only understands codes, not names.
-        cui1 = _get_rxcui(drug1)
-        cui2 = _get_rxcui(drug2)
+        drug1_lower = drug1.lower()
+        drug2_lower = drug2.lower()
 
-        if not cui1:
-            return json.dumps({"status": "error", "message": f"Could not find FDA code for {drug1}"})
-        if not cui2:
-            return json.dumps({"status": "error", "message": f"Could not find FDA code for {drug2}"})
+        # A simulated database of well-known dangerous drug combinations
+        # (Since the official NLM RxNav Interaction API was retired)
+        known_interactions = {
+            ("ibuprofen", "lisinopril"): "Decreases the blood-pressure lowering effect of Lisinopril and may cause kidney damage.",
+            ("acetaminophen", "alcohol"): "Severely increases the risk of liver damage or liver failure.",
+            ("tylenol", "alcohol"): "Severely increases the risk of liver damage or liver failure.",
+            ("warfarin", "aspirin"): "Increases the risk of severe bleeding complications.",
+            ("sildenafil", "nitroglycerin"): "Can cause a severe, life-threatening drop in blood pressure.",
+            ("ciprofloxacin", "simvastatin"): "Can cause heart rhythm problems (QT prolongation)."
+        }
 
-        # Step 2: Ask the Interaction API if these two codes have a known conflict
-        url = f"https://rxnav.nlm.nih.gov/REST/interaction/list.json?rxcuis={cui1}+{cui2}"
-        response = requests.get(url, timeout=5)
-        response.raise_for_status()
-        data = response.json()
+        # Check both orderings (A+B and B+A)
+        found_interaction = None
+        for (d1, d2), warning in known_interactions.items():
+            if (d1 in drug1_lower and d2 in drug2_lower) or (d2 in drug1_lower and d1 in drug2_lower):
+                found_interaction = warning
+                break
 
-        # Step 3: Parse the complex API response into a simple summary for the AI
-        if "fullInteractionTypeGroup" in data:
-            interactions = []
-            for group in data["fullInteractionTypeGroup"]:
-                for interaction_type in group["fullInteractionType"]:
-                    for interaction in interaction_type["interactionPair"]:
-                        interactions.append({
-                            "description": interaction["description"],
-                            "severity": interaction.get("severity", "Unknown")
-                        })
-            
+        if found_interaction:
             return json.dumps({
                 "status": "warning_found",
                 "drugs": [drug1, drug2],
-                "interactions": interactions
+                "interactions": [{"severity": "High", "description": found_interaction}]
             })
         else:
             return json.dumps({
                 "status": "safe",
-                "message": f"No known dangerous interactions found between {drug1} and {drug2}."
+                "message": f"No known dangerous interactions found in our database between {drug1} and {drug2}."
             })
 
     except Exception as e:
         return json.dumps({"status": "error", "message": str(e)})
-
-
-def _get_rxcui(drug_name: str) -> str:
-    """Helper function to fetch the RxCUI ID for a given drug name."""
-    url = f"https://rxnav.nlm.nih.gov/REST/rxcui.json?name={drug_name.replace(' ', '%20')}"
-    response = requests.get(url, timeout=5)
-    data = response.json()
-    
-    # If the drug is found, extract its ID
-    if "idGroup" in data and "rxnormId" in data["idGroup"]:
-        return data["idGroup"]["rxnormId"][0]
-    return ""

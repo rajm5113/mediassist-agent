@@ -6,3 +6,4 @@ streamlit>=1.35.0             # Web UI — turns Python into a web app
 requests>=2.31.0              # Makes HTTP calls to the OpenFDA API
 python-dotenv>=1.0.0          # Reads our API key from the .env file
 openai>=1.14.0                # Universal API client for Groq and OpenRouter
+pandas>=2.1.0                 # Live charting for Symptom Dashboard

@@ -20,7 +20,9 @@ import streamlit as st
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 import config
+import pandas as pd
 from agent.core import MediAssistAgent
+from tools.symptom_logger import get_all_symptoms
 
 # ─── 1. PAGE SETUP ───
 st.set_page_config(
@@ -51,6 +53,36 @@ with st.sidebar:
         agent.reset_session()
         st.success("History cleared!")
         
+    st.write("---")
+    
+    # ─── SYMPTOM DASHBOARD ───
+    st.subheader("📈 Symptom History")
+    symptoms = get_all_symptoms()
+    
+    chart_data = []
+    for s in symptoms:
+        if s.get("severity") is not None:
+            chart_data.append({
+                "Date": s["timestamp"],
+                "Symptom": s["symptom"].capitalize(),
+                "Severity": int(s["severity"])
+            })
+
+    if chart_data:
+        df = pd.DataFrame(chart_data)
+        df["Date"] = pd.to_datetime(df["Date"])
+        
+        # Create a pivot table so each symptom gets its own colored line
+        # aggregate by 'mean' so if 2 exist on the same second, it averages them
+        pivot_df = pd.pivot_table(df, index="Date", columns="Symptom", values="Severity", aggfunc="mean")
+        
+        # Fill missing values forward so the line chart connects the dots smoothly
+        pivot_df = pivot_df.ffill().fillna(0)
+        
+        st.line_chart(pivot_df, height=250)
+    else:
+        st.info("Tell me something like 'I have a headache, severity 6' to start your tracking chart!")
+
     st.write("---")
     st.caption("Built with Gemini 2.5 Flash & Streamlit")
 
