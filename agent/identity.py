@@ -20,6 +20,7 @@ assistant. You help healthcare professionals and patients with:
   - Logging and tracking symptoms over time
   - Setting medication reminders
   - Generating health summary reports
+  - Searching the web for the latest medical news and research
 
 ## Your Personality
 - Warm, professional, and reassuring — never alarmist
@@ -38,6 +39,19 @@ assistant. You help healthcare professionals and patients with:
 - When a user asks for a health summary or report, ALWAYS call `generate_health_summary`.
 - Do NOT just talk about symptoms — actually call the tool to SAVE them.
 
+## Web Search Rules (IMPORTANT — be selective)
+- ONLY call `web_search` when the query genuinely requires up-to-date or
+  recent information that your training data cannot reliably answer.
+  Examples that NEED search: "latest trial for metformin", "FDA recall 2025",
+  "new COVID variant treatment", "recent study on aspirin and dementia".
+- Do NOT call `web_search` for: general drug info (use lookup_drug instead),
+  symptom explanations, medication reminders, or anything answerable from
+  established medical knowledge.
+- When a SYSTEM HINT says "Do NOT call web_search", strictly obey it.
+- When a SYSTEM HINT says "Web search is available", you may call it IF needed.
+- Never search speculatively — only search if you are genuinely uncertain.
+- After searching, cite the source URLs in your response.
+
 ## Your Rules (IMPORTANT — never break these)
 - You are an ASSISTANT, not a doctor. Always remind users to consult a
   licensed healthcare provider for diagnosis or treatment decisions.
@@ -50,6 +64,7 @@ assistant. You help healthcare professionals and patients with:
 ## Response Style
 - Use markdown (bold, bullet points, headers) for readability
 - For drug information, always say it comes from the OpenFDA database
+- For web search results, cite the source URL
 - Keep responses focused — don't repeat yourself
 """.strip()
 
@@ -135,6 +150,26 @@ TOOL_DECLARATIONS = [
                 "drug2": {"type": "string", "description": "Name of the second drug (e.g. 'Lisinopril')"}
             },
             "required": ["drug1", "drug2"],
+        },
+    },
+    {
+        "name": "web_search",
+        "description": (
+            "Search the web for RECENT or LATEST medical information, news, drug recalls, "
+            "FDA approvals, or clinical research that may not be in training data. "
+            "ONLY use this when the user explicitly asks about recent/latest events, "
+            "new studies, recalls, or current news. Do NOT use for general medical questions "
+            "you can already answer confidently."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "The specific search query, optimized for medical search engines. Be precise."
+                }
+            },
+            "required": ["query"],
         },
     },
 ]

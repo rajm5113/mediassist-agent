@@ -9,4 +9,5 @@ openai>=1.14.0                # Universal API client for Groq and OpenRouter
 pandas>=2.1.0                 # Live charting for Symptom Dashboard
 gTTS>=2.5.0                   # Text-to-Speech: converts agent replies to MP3
 SpeechRecognition>=3.10.0     # Speech-to-Text: transcribes microphone audio
+duckduckgo-search>=8.0.0      # Free web search for Step 15 Live Medical Search
 

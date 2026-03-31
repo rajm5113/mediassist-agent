@@ -16,6 +16,7 @@ import google.generativeai as genai
 import config
 from agent.identity import SYSTEM_PROMPT, TOOL_DECLARATIONS
 from agent.router import route_tool_call
+from tools.web_search import SEARCH_TRIGGER_KEYWORDS
 from memory.session_memory import SessionMemory
 from memory.persistent_memory import PersistentMemory
 from agent.decorators import with_api_failover
@@ -120,6 +121,19 @@ class MediAssistAgent:
                 
                 # Delete the local temp file to save space
                 os.unlink(tmp_path)
+
+        # ── Layer 1: Web Search Keyword Pre-Filter ──
+        # Check if this query needs real-time info before sending to Gemini.
+        # If yes, hint Gemini that web_search is available.
+        # If no, tell Gemini NOT to call web_search (saves API calls).
+        msg_lower = user_message.lower()
+        needs_search = any(kw in msg_lower for kw in SEARCH_TRIGGER_KEYWORDS)
+        if needs_search:
+            search_hint = "\n\n[SYSTEM HINT: Web search is available if you need up-to-date information for this query.]"
+        else:
+            search_hint = "\n\n[SYSTEM HINT: Answer from your existing knowledge. Do NOT call web_search for this query.]"
+
+        message_parts[0] = user_message + search_hint
 
         # Send it to Gemini
         response = self._chat.send_message(message_parts)

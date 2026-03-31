@@ -21,6 +21,7 @@ from tools.symptom_logger import log_symptom
 from tools.medication_reminder import set_medication_reminder, list_reminders
 from tools.health_summary import generate_health_summary
 from tools.interaction_checker import check_drug_interaction
+from tools.web_search import web_search
 
 
 def route_tool_call(function_name: str, function_args: Dict[str, Any]) -> str:
@@ -64,6 +65,9 @@ def route_tool_call(function_name: str, function_args: Dict[str, Any]) -> str:
             result = generate_health_summary(
                 patient_name=function_args.get("patient_name", "User")
             )
+
+        elif function_name == "web_search":
+            result = web_search(query=function_args["query"])
 
         else:
             # If Gemini somehow hallucinates a tool that doesn't exist
