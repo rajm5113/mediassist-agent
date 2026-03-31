@@ -17,18 +17,30 @@ from agent.identity import SYSTEM_PROMPT, TOOL_DECLARATIONS
 from agent.router import route_tool_call
 
 def _get_openai_tools():
-    """Translates our custom tool list into the OpenAI/Groq JSON Schema format."""
+    """
+    Translates our custom tool list into the OpenAI/Groq JSON Schema format.
+    NOTE: web_search is EXCLUDED here because Groq/OpenRouter's Llama models
+    produce malformed tool calls for it. web_search only works via Gemini's
+    native function calling. The fallback providers handle the core 5 tools.
+    """
+    # Tools that Groq/OpenRouter Llama models reliably support
+    SUPPORTED_IN_FALLBACK = {
+        "lookup_drug", "log_symptom", "set_medication_reminder",
+        "list_reminders", "generate_health_summary", "check_drug_interaction"
+    }
+
     tools = []
     for t in TOOL_DECLARATIONS:
-        # Build standard OpenAI tool format
+        if t["name"] not in SUPPORTED_IN_FALLBACK:
+            continue   # ← skip web_search for fallback providers
+
         properties = {}
         for prop_name, prop_data in t["parameters"].get("properties", {}).items():
-            # OpenAI requires types to be lowercase (e.g. "string" instead of "STRING")
             properties[prop_name] = {
                 "type": prop_data["type"].lower(),
                 "description": prop_data.get("description", "")
             }
-            
+
         tools.append({
             "type": "function",
             "function": {
@@ -64,12 +76,25 @@ def run_groq_fallback(session_history, user_message: str, model: str = "llama-3.
 
     max_turns = 5
     for _ in range(max_turns):
-        response = client.chat.completions.create(
-            model=model,
-            messages=messages,
-            tools=_get_openai_tools(),
-            temperature=config.TEMPERATURE
-        )
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                messages=messages,
+                tools=_get_openai_tools(),
+                temperature=config.TEMPERATURE
+            )
+        except Exception as e:
+            # Groq returns 400 'tool_use_failed' when model generates bad tool syntax.
+            # Retry once as plain chat (no tools) so the user still gets an answer.
+            if "tool_use_failed" in str(e) or "400" in str(e):
+                print(f"  [Groq] tool_use_failed — retrying as plain chat...")
+                plain_response = client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    temperature=config.TEMPERATURE
+                )
+                return plain_response.choices[0].message.content or "Done."
+            raise  # re-raise unknown errors
 
         response_message = response.choices[0].message
         messages.append(response_message)
@@ -88,7 +113,7 @@ def run_groq_fallback(session_history, user_message: str, model: str = "llama-3.
                 })
         else:
             return response_message.content or "Done."
-            
+
     return "⚠️ **Groq Error:** Model reached max tool-call turns."
 
 
