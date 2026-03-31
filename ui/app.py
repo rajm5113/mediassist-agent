@@ -24,6 +24,7 @@ import pandas as pd
 from agent.core import MediAssistAgent
 from tools.symptom_logger import get_all_symptoms
 from tools.voice import transcribe_audio, text_to_speech
+from agent.llm_client import run_groq_fallback, run_openrouter_fallback
 
 # ─── 1. PAGE SETUP ───
 st.set_page_config(
@@ -53,6 +54,27 @@ with st.sidebar:
     if st.button("🗑️ Clear Chat History", use_container_width=True):
         agent.reset_session()
         st.success("History cleared!")
+
+    st.write("---")
+
+    # ─── MODEL SELECTOR ───
+    st.subheader("🧠 AI Model")
+
+    # Each option maps to: (provider, model_id)
+    MODEL_OPTIONS = {
+        "🔮 Gemini 2.5 Flash (Default)": ("gemini", None),
+        "⚡ Groq — Llama 3.3 70B": ("groq", "llama-3.3-70b-versatile"),
+        "🚀 Groq — Llama 3.1 8B (Fast)": ("groq", "llama-3.1-8b-instant"),
+        "🌐 OpenRouter — Llama 3 8B (Free)": ("openrouter", "meta-llama/llama-3-8b-instruct:free"),
+    }
+
+    selected_model_label = st.selectbox(
+        "Choose a model:",
+        options=list(MODEL_OPTIONS.keys()),
+        index=0,
+        help="Switch between AI providers without restarting the app."
+    )
+    selected_provider, selected_model_id = MODEL_OPTIONS[selected_model_label]
 
     st.write("---")
 
@@ -104,7 +126,7 @@ with st.sidebar:
 
 # ─── 4. MAIN CHAT INTERFACE ───
 st.title("Hi, I'm MediAssist! 👋")
-st.write("I can look up FDA drug info, log your symptoms, and set reminders.")
+st.write(f"I can look up FDA drug info, log your symptoms, and set reminders. &nbsp; `{selected_model_label}`")
 
 # Draw the existing chat history
 # We read this from our agent.session_memory so it matches exactly what Gemini sees.
@@ -152,9 +174,27 @@ if user_text:
 
     # B. Show a spinning loading icon while the Brain thinks
     with st.chat_message("assistant"):
-        with st.spinner("Thinking..."):
-            # C. Send the text and the file to our Agent Core!
-            reply = agent.chat(user_text, uploaded_file=uploaded_file)
+        with st.spinner(f"Thinking with {selected_model_label}..."):
+            # ─ Route to the selected model ─
+            if selected_provider == "gemini":
+                reply = agent.chat(user_text, uploaded_file=uploaded_file)
+            elif selected_provider == "groq":
+                reply = run_groq_fallback(
+                    agent.session_memory.get_history(),
+                    user_text,
+                    model=selected_model_id
+                )
+                # Save to memory so the chat history stays consistent
+                agent.session_memory.add_message("user", user_text)
+                agent.session_memory.add_message("model", reply)
+            elif selected_provider == "openrouter":
+                reply = run_openrouter_fallback(
+                    agent.session_memory.get_history(),
+                    user_text,
+                    model=selected_model_id
+                )
+                agent.session_memory.add_message("user", user_text)
+                agent.session_memory.add_message("model", reply)
 
         # D. Draw the final answer on screen
         st.markdown(reply)

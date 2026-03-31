@@ -43,14 +43,17 @@ def _get_openai_tools():
         })
     return tools
 
-def run_groq_fallback(session_history, user_message: str) -> str:
+def run_groq_fallback(session_history, user_message: str, model: str = "llama-3.3-70b-versatile") -> str:
     """
-    Kicks in when Gemini fails. Connects to Groq's insanely fast inference engine.
+    Connects to Groq. Accepts any Groq-supported model name.
+    Defaults to llama-3.3-70b-versatile (used as an auto-failover from Gemini).
     """
+    import openai as openai_module
     if not config.GROQ_API_KEY:
-        raise openai.APIStatusError(message="Groq API key not found", response=None, body=None)
+        raise openai_module.APIStatusError(message="Groq API key not found", response=None, body=None)
 
     client = OpenAI(api_key=config.GROQ_API_KEY, base_url="https://api.groq.com/openai/v1")
+    print(f"  [Groq] Using model: {model}")
 
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     for msg in session_history:
@@ -62,7 +65,7 @@ def run_groq_fallback(session_history, user_message: str) -> str:
     max_turns = 5
     for _ in range(max_turns):
         response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model=model,
             messages=messages,
             tools=_get_openai_tools(),
             temperature=config.TEMPERATURE
@@ -75,8 +78,7 @@ def run_groq_fallback(session_history, user_message: str) -> str:
             for tool_call in response_message.tool_calls:
                 fn_name = tool_call.function.name
                 fn_args = json.loads(tool_call.function.arguments)
-                print(f"  [Groq Fallback] using tool: {fn_name} ...")
-                
+                print(f"  [Groq] using tool: {fn_name} ...")
                 result_json = route_tool_call(fn_name, fn_args)
                 messages.append({
                     "role": "tool",
@@ -87,17 +89,18 @@ def run_groq_fallback(session_history, user_message: str) -> str:
         else:
             return response_message.content or "Done."
             
-    return "⚠️ **Groq Error:** The model got stuck in an infinite loop and was forcefully stopped to save tokens."
+    return "⚠️ **Groq Error:** Model reached max tool-call turns."
 
 
-def run_openrouter_fallback(session_history, user_message: str) -> str:
+def run_openrouter_fallback(session_history, user_message: str, model: str = "meta-llama/llama-3-8b-instruct:free") -> str:
     """
-    Kicks in when BOTH Gemini and Groq fail. Connects to OpenRouter.
+    Connects to OpenRouter. Accepts any OpenRouter model string.
     """
     if not config.OPENROUTER_API_KEY:
         raise Exception("OpenRouter API key not found in .env")
 
     client = OpenAI(api_key=config.OPENROUTER_API_KEY, base_url="https://openrouter.ai/api/v1")
+    print(f"  [OpenRouter] Using model: {model}")
 
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     for msg in session_history:
@@ -109,8 +112,7 @@ def run_openrouter_fallback(session_history, user_message: str) -> str:
     max_turns = 5
     for _ in range(max_turns):
         response = client.chat.completions.create(
-            # Using a fast, reliable model on OpenRouter
-            model="meta-llama/llama-3-8b-instruct:free",
+            model=model,
             messages=messages,
             tools=_get_openai_tools(),
             temperature=config.TEMPERATURE
@@ -123,8 +125,7 @@ def run_openrouter_fallback(session_history, user_message: str) -> str:
             for tool_call in response_message.tool_calls:
                 fn_name = tool_call.function.name
                 fn_args = json.loads(tool_call.function.arguments)
-                print(f"  [OpenRouter Fallback] using tool: {fn_name} ...")
-                
+                print(f"  [OpenRouter] using tool: {fn_name} ...")
                 result_json = route_tool_call(fn_name, fn_args)
                 messages.append({
                     "role": "tool",
@@ -135,4 +136,4 @@ def run_openrouter_fallback(session_history, user_message: str) -> str:
         else:
             return response_message.content or "Done."
             
-    return "⚠️ **OpenRouter Error:** The model got stuck in an infinite loop."
+    return "⚠️ **OpenRouter Error:** Model reached max tool-call turns."
