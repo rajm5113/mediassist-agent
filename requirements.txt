@@ -2,8 +2,11 @@
 # Install them with: .venv\Scripts\pip install -r requirements.txt
 
 google-generativeai>=0.7.0   # Gemini API — the AI brain
-streamlit>=1.35.0             # Web UI — turns Python into a web app
+streamlit>=1.37.0             # Web UI (1.37+ needed for st.audio_input voice widget)
 requests>=2.31.0              # Makes HTTP calls to the OpenFDA API
 python-dotenv>=1.0.0          # Reads our API key from the .env file
 openai>=1.14.0                # Universal API client for Groq and OpenRouter
 pandas>=2.1.0                 # Live charting for Symptom Dashboard
+gTTS>=2.5.0                   # Text-to-Speech: converts agent replies to MP3
+SpeechRecognition>=3.10.0     # Speech-to-Text: transcribes microphone audio
+

@@ -23,6 +23,7 @@ import config
 import pandas as pd
 from agent.core import MediAssistAgent
 from tools.symptom_logger import get_all_symptoms
+from tools.voice import transcribe_audio, text_to_speech
 
 # ─── 1. PAGE SETUP ───
 st.set_page_config(
@@ -52,6 +53,21 @@ with st.sidebar:
     if st.button("🗑️ Clear Chat History", use_container_width=True):
         agent.reset_session()
         st.success("History cleared!")
+
+    st.write("---")
+
+    # ─── VOICE MODE TOGGLE ───
+    st.subheader("🎤 Voice Mode")
+    voice_enabled = st.toggle("Enable Voice Mode", value=False)
+
+    if voice_enabled:
+        st.caption("🔴 Speak your message, then click Stop.")
+        audio_input = st.audio_input("Record your message")
+    else:
+        audio_input = None
+        st.caption("Turn on to speak instead of type.")
+
+    tts_enabled = st.toggle("🔊 Read replies aloud", value=False, disabled=not voice_enabled)
         
     st.write("---")
     
@@ -102,22 +118,49 @@ for msg in agent.session_memory.get_history():
 # Allow uploading medical reports
 uploaded_file = st.sidebar.file_uploader("📄 Upload Medical Report (PDF/Image)", type=["pdf", "png", "jpg", "jpeg"])
 
-# st.chat_input waits for the user to type something and hit Enter
-user_text = st.chat_input("Ask about a medication, log a symptom, or discuss the uploaded file...")
+# ── Determine input: typed text OR transcribed voice ──
+user_text = None
+voice_transcription = None
 
-# If the user typed something:
+# Check for voice input first
+if audio_input is not None:
+    with st.spinner("🎤 Transcribing your voice..."):
+        voice_transcription = transcribe_audio(audio_input.getvalue())
+    if voice_transcription and not voice_transcription.startswith("["):
+        st.sidebar.success(f'Heard: "{voice_transcription}"')
+        user_text = voice_transcription
+    elif voice_transcription:
+        st.sidebar.error(voice_transcription)  # Show error message
+
+# Fall back to typed text
+if not user_text:
+    user_text = st.chat_input("Ask about a medication, log a symptom, or discuss the uploaded file...")
+else:
+    # Still render the (disabled) chat input so layout doesn't jump
+    st.chat_input("Voice mode active — speak using the sidebar microphone", disabled=True)
+
+# If the user typed or spoke something:
 if user_text:
     # A. Draw the user's message on the screen immediately
     with st.chat_message("user"):
-        st.markdown(user_text)
+        if voice_transcription and voice_transcription == user_text:
+            st.markdown(f"🎤 *{user_text}*")
+        else:
+            st.markdown(user_text)
         if uploaded_file:
             st.caption(f"📎 Attached: {uploaded_file.name}")
 
     # B. Show a spinning loading icon while the Brain thinks
     with st.chat_message("assistant"):
-        with st.spinner("Thinking (and maybe reading your file/running tools)..."):
+        with st.spinner("Thinking..."):
             # C. Send the text and the file to our Agent Core!
             reply = agent.chat(user_text, uploaded_file=uploaded_file)
-            
-        # D. The Brain is done. Draw the final answer on the screen.
+
+        # D. Draw the final answer on screen
         st.markdown(reply)
+
+        # E. If TTS is enabled, speak the reply aloud
+        if tts_enabled and voice_enabled:
+            with st.spinner("🔊 Generating audio..."):
+                mp3_bytes = text_to_speech(reply)
+            st.audio(mp3_bytes, format="audio/mp3", autoplay=True)
