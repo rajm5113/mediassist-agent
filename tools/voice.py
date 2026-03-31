@@ -4,56 +4,83 @@ tools/voice.py — Voice Mode: Speech-to-Text & Text-to-Speech
 🎓 HOW IT WORKS:
    STT (Speech → Text):
      - The user records audio via Streamlit's built-in `st.audio_input()` widget.
-     - We save the bytes to a temp WAV file.
-     - Google's free Speech Recognition API transcribes it to text.
-     - That text is sent to the agent exactly like a typed message.
+     - We send the audio bytes to Groq's Whisper Large v3 Turbo via API.
+     - Whisper is OpenAI's state-of-the-art model — far more accurate than
+       basic browser APIs, especially for medical terms, drug names & accents.
+     - Falls back to Google's free API if the Groq key is unavailable.
 
    TTS (Text → Speech):
-     - After the agent responds, we pass the reply text to gTTS (Google Text-to-Speech).
+     - After the agent responds, we pass the reply text to gTTS.
      - gTTS generates an MP3 in memory (no file saved to disk).
-     - `st.audio()` plays it directly in the browser with an auto-play flag.
+     - `st.audio()` plays it directly in the browser.
 """
 
 import io
 import tempfile
 import os
-import speech_recognition as sr
+import config
+from openai import OpenAI
 from gtts import gTTS
 
 
 def transcribe_audio(audio_bytes: bytes) -> str:
     """
-    Takes raw audio bytes from st.audio_input() and transcribes them to text.
-    Uses Google's free Web Speech API (no API key required for basic use).
+    Transcribes audio bytes to text using Groq's Whisper Large v3 Turbo.
+    This is dramatically more accurate than Google's basic Web Speech API,
+    especially for medical terminology, drug names, and non-native accents.
+
+    Falls back to Google's free API if Groq key is not configured.
     Returns the transcribed string, or an empty string if it fails.
     """
-    recognizer = sr.Recognizer()
+    # ── PRIMARY: Groq Whisper (high accuracy, free) ──
+    if config.GROQ_API_KEY:
+        try:
+            client = OpenAI(
+                api_key=config.GROQ_API_KEY,
+                base_url="https://api.groq.com/openai/v1"
+            )
 
-    # We need to save the audio to a temp WAV file because SpeechRecognition
-    # can't read raw bytes directly — it needs a file object.
-    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-        tmp.write(audio_bytes)
-        tmp_path = tmp.name
+            # Groq Whisper expects a file-like object with a filename
+            # We name it .wav so the API knows the format
+            audio_file = io.BytesIO(audio_bytes)
+            audio_file.name = "audio.wav"
 
+            transcription = client.audio.transcriptions.create(
+                model="whisper-large-v3-turbo",
+                file=audio_file,
+                language="en",          # Specify English for better accuracy
+                temperature=0.0,        # Deterministic — no creative guessing
+                # This "primes" Whisper to expect medical language
+                prompt="MediAssist healthcare assistant. Medical terms: ibuprofen, lisinopril, acetaminophen, symptom, severity, dosage, prescription, fever, headache, nausea."
+            )
+            return transcription.text.strip()
+
+        except Exception as e:
+            print(f"  [Voice] Groq Whisper failed: {e}. Falling back to Google STT...")
+
+    # ── FALLBACK: Google Web Speech API ──
     try:
-        with sr.AudioFile(tmp_path) as source:
-            # Adjust for ambient noise to improve accuracy
-            recognizer.adjust_for_ambient_noise(source, duration=0.3)
-            audio_data = recognizer.record(source)
+        import speech_recognition as sr
 
-        # Use Google's free speech recognition
-        text = recognizer.recognize_google(audio_data)
-        return text
+        recognizer = sr.Recognizer()
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+            tmp.write(audio_bytes)
+            tmp_path = tmp.name
 
-    except sr.UnknownValueError:
-        # Audio was too quiet or unclear
-        return ""
-    except sr.RequestError as e:
-        # Couldn't reach Google's servers
-        return f"[Speech Recognition Error: {e}]"
-    finally:
-        # Always clean up the temp file
-        os.unlink(tmp_path)
+        try:
+            with sr.AudioFile(tmp_path) as source:
+                recognizer.adjust_for_ambient_noise(source, duration=0.3)
+                audio_data = recognizer.record(source)
+            return recognizer.recognize_google(audio_data)
+        except sr.UnknownValueError:
+            return ""
+        except sr.RequestError as e:
+            return f"[Speech Recognition Error: {e}]"
+        finally:
+            os.unlink(tmp_path)
+
+    except Exception as e:
+        return f"[Voice Error: {e}]"
 
 
 def text_to_speech(text: str) -> bytes:
