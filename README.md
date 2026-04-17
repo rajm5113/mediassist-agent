@@ -4,6 +4,9 @@
 
 MediAssist is a fully autonomous, multi-tool AI agent that can look up drug information, log symptoms, set medication reminders, check dangerous drug interactions, search the latest medical news, and even listen and talk back — all from a clean Streamlit web interface.
 
+## 🚀 Live Demo
+[Open the live app on Streamlit](https://share.streamlit.io/rajm5113/mediassist-agent/main/ui/app.py)
+
 ---
 
 ## 📸 What Does It Look Like?
