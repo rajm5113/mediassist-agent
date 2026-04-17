@@ -82,18 +82,19 @@ with st.sidebar:
 
     st.write("---")
 
-    # ─── VOICE MODE TOGGLE ───
+    # ─── VOICE MODE ───
     st.subheader("🎤 Voice Mode")
-    voice_enabled = st.toggle("Enable Voice Mode", value=False)
+    voice_enabled = st.checkbox("Enable Voice Mode", value=False)
 
     if voice_enabled:
         st.caption("🔴 Speak your message, then click Stop.")
         audio_input = st.audio_input("Record your message")
+        st.caption("Best used in Chrome or Edge on desktop.")
     else:
         audio_input = None
         st.caption("Turn on to speak instead of type.")
 
-    tts_enabled = st.toggle("🔊 Read replies aloud", value=False, disabled=not voice_enabled)
+    tts_enabled = st.checkbox("🔊 Read replies aloud", value=False, disabled=not voice_enabled)
         
     st.write("---")
     
@@ -148,10 +149,30 @@ uploaded_file = st.sidebar.file_uploader("📄 Upload Medical Report (PDF/Image)
 user_text = None
 voice_transcription = None
 
+# Helper to support different Streamlit audio object shapes
+def _get_audio_bytes(audio_obj):
+    if hasattr(audio_obj, "getvalue"):
+        return audio_obj.getvalue()
+    if hasattr(audio_obj, "read"):
+        return audio_obj.read()
+    return bytes(audio_obj)
+
 # Check for voice input first
 if audio_input is not None:
-    with st.spinner("🎤 Transcribing your voice..."):
-        voice_transcription = transcribe_audio(audio_input.getvalue())
+    try:
+        audio_bytes = _get_audio_bytes(audio_input)
+        if audio_bytes:
+            with st.spinner("🎤 Transcribing your voice..."):
+                voice_transcription = transcribe_audio(audio_bytes)
+        else:
+            voice_transcription = ""
+    except Exception as e:
+        st.sidebar.error(
+            "Voice recording failed. Please reload, allow microphone access, and try again."
+        )
+        voice_transcription = ""
+        print(f"[Voice] Failed to read audio input: {e}")
+
     if voice_transcription and not voice_transcription.startswith("["):
         st.sidebar.success(f'Heard: "{voice_transcription}"')
         user_text = voice_transcription
