@@ -55,15 +55,23 @@ def _get_openai_tools():
         })
     return tools
 
-def run_groq_fallback(session_history, user_message: str, model: str = "llama-3.3-70b-versatile") -> str:
+
+def _append_user_message(messages, session_history, user_message: str):
+    """Avoid duplicating the active user message during automatic failover."""
+    if not session_history or session_history[-1].get("role") != "user" or session_history[-1].get("content") != user_message:
+        _append_user_message(messages, session_history, user_message)
+
+
+def run_groq_fallback(session_history, user_message: str, model: str | None = None) -> str:
     """
-    Connects to Groq. Accepts any Groq-supported model name.
-    Defaults to llama-3.3-70b-versatile (used as an auto-failover from Gemini).
+    Connects to Groq using a current tool-capable model.
+    The default can be overridden with the GROQ_MODEL environment variable.
     """
     import openai as openai_module
     if not config.GROQ_API_KEY:
         raise openai_module.APIStatusError(message="Groq API key not found", response=None, body=None)
 
+    model = model or config.GROQ_MODEL
     client = OpenAI(api_key=config.GROQ_API_KEY, base_url="https://api.groq.com/openai/v1")
     print(f"  [Groq] Using model: {model}")
 
@@ -72,7 +80,7 @@ def run_groq_fallback(session_history, user_message: str, model: str = "llama-3.
         role = "assistant" if msg["role"] == "model" else "user"
         messages.append({"role": role, "content": msg["content"]})
         
-    messages.append({"role": "user", "content": user_message})
+    _append_user_message(messages, session_history, user_message)
 
     max_turns = 5
     for _ in range(max_turns):
@@ -86,7 +94,7 @@ def run_groq_fallback(session_history, user_message: str, model: str = "llama-3.
         except Exception as e:
             # Groq returns 400 'tool_use_failed' when model generates bad tool syntax.
             # Retry once as plain chat (no tools) so the user still gets an answer.
-            if "tool_use_failed" in str(e) or "400" in str(e):
+            if "tool_use_failed" in str(e):
                 print(f"  [Groq] tool_use_failed — retrying as plain chat...")
                 plain_response = client.chat.completions.create(
                     model=model,
@@ -117,14 +125,15 @@ def run_groq_fallback(session_history, user_message: str, model: str = "llama-3.
     return "⚠️ **Groq Error:** Model reached max tool-call turns."
 
 
-def run_openrouter_fallback(session_history, user_message: str, model: str = "meta-llama/llama-3-8b-instruct:free", supports_tools: bool = True) -> str:
+def run_openrouter_fallback(session_history, user_message: str, model: str | None = None, supports_tools: bool = False) -> str:
     """
-    Connects to OpenRouter. Accepts any OpenRouter model string.
+    Connects to OpenRouter. Defaults to its free-model router so a retired free model does not break the fallback.
     supports_tools=False → plain chat mode (for free models that can't handle tool schemas).
     """
     if not config.OPENROUTER_API_KEY:
         raise Exception("OpenRouter API key not found in .env")
 
+    model = model or config.OPENROUTER_MODEL
     client = OpenAI(api_key=config.OPENROUTER_API_KEY, base_url="https://openrouter.ai/api/v1")
     print(f"  [OpenRouter] Using model: {model} | tools: {supports_tools}")
 
@@ -133,7 +142,7 @@ def run_openrouter_fallback(session_history, user_message: str, model: str = "me
         role = "assistant" if msg["role"] == "model" else "user"
         messages.append({"role": role, "content": msg["content"]})
         
-    messages.append({"role": "user", "content": user_message})
+    _append_user_message(messages, session_history, user_message)
 
     # ── Plain chat mode (no tools) — for free/limited models ──
     if not supports_tools:
