@@ -19,11 +19,10 @@ from agent.router import route_tool_call
 def _get_openai_tools():
     """
     Translates our custom tool list into the OpenAI/Groq JSON Schema format.
-    NOTE: web_search is EXCLUDED here because Groq/OpenRouter's Llama models
-    produce malformed tool calls for it. web_search only works via Gemini's
-    native function calling. The fallback providers handle the core 5 tools.
+    NOTE: web_search is excluded because this app's local search workflow is
+    only enabled for Gemini. The fallback providers handle the core health tools.
     """
-    # Tools that Groq/OpenRouter Llama models reliably support
+    # Tools supported by the fallback providers
     SUPPORTED_IN_FALLBACK = {
         "lookup_drug", "log_symptom", "set_medication_reminder",
         "list_reminders", "generate_health_summary", "check_drug_interaction"
