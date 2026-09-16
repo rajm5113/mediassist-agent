@@ -59,7 +59,7 @@ def _get_openai_tools():
 def _append_user_message(messages, session_history, user_message: str):
     """Avoid duplicating the active user message during automatic failover."""
     if not session_history or session_history[-1].get("role") != "user" or session_history[-1].get("content") != user_message:
-        _append_user_message(messages, session_history, user_message)
+        messages.append({"role": "user", "content": user_message})
 
 
 def run_groq_fallback(session_history, user_message: str, model: str | None = None) -> str:
