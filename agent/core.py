@@ -1,198 +1,155 @@
 """
-agent/core.py — The Orchestrator (The Main Brain)
+agent/core.py — The Gemini orchestrator for MediAssist.
 
-🎓 WHAT IS THIS?
-   This is the final puzzle piece before the UI. It glues everything together:
-     1. It loads our API key and configures the Gemini SDK.
-     2. It attaches our Memory so Gemini remembers things.
-     3. It sends your message to Gemini.
-     4. If Gemini wants a tool, it asks the Router to run it, then sends 
-        the result back to Gemini to get the final answer.
-     5. It returns that final text answer back to you (or the Streamlit UI).
+Uses the maintained Google GenAI SDK and manually executes the app's local
+health tools when Gemini requests them.
 """
 
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
 import config
+from agent.decorators import with_api_failover
 from agent.identity import SYSTEM_PROMPT, TOOL_DECLARATIONS
 from agent.router import route_tool_call
-from tools.web_search import SEARCH_TRIGGER_KEYWORDS
-from memory.session_memory import SessionMemory
 from memory.persistent_memory import PersistentMemory
-from agent.decorators import with_api_failover
+from memory.session_memory import SessionMemory
+from tools.web_search import SEARCH_TRIGGER_KEYWORDS
 
-def _format_tools_for_gemini():
-    """
-    Helper function: Converts our simple Python tool list (in identity.py)
-    into the strict "protobuf" format that Google's SDK requires.
-    """
-    declarations = []
-    for t in TOOL_DECLARATIONS:
-        # Build the properties dict
-        props = {}
-        for param_name, param_details in t["parameters"].get("properties", {}).items():
-            param_type_str = param_details["type"].upper()
-            props[param_name] = genai.protos.Schema(
-                type=getattr(genai.protos.Type, param_type_str),
-                description=param_details.get("description", "")
+
+def _tool_config():
+    """Return the custom function declarations in the current Gemini SDK format."""
+    return [types.Tool(function_declarations=TOOL_DECLARATIONS)]
+
+
+def _history_contents(history):
+    """Convert saved chat memory into Gemini content objects."""
+    contents = []
+    for message in history:
+        role = "model" if message.get("role") == "model" else "user"
+        contents.append(
+            types.Content(
+                role=role,
+                parts=[types.Part.from_text(text=message.get("content", ""))],
             )
-            
-        # Build the final schema
-        schema = genai.protos.Schema(
-            type=genai.protos.Type.OBJECT,
-            properties=props,
-            required=t["parameters"].get("required", [])
         )
-        
-        dec = genai.protos.FunctionDeclaration(
-            name=t["name"],
-            description=t["description"],
-            parameters=schema
-        )
-        declarations.append(dec)
-        
-    return [genai.protos.Tool(function_declarations=declarations)]
+    return contents
+
+
+def _uploaded_file_part(uploaded_file):
+    """Create an inline Gemini part for an uploaded PDF or image."""
+    mime_type = getattr(uploaded_file, "type", None)
+    if not mime_type:
+        name = uploaded_file.name.lower()
+        mime_type = "application/pdf" if name.endswith(".pdf") else "image/jpeg"
+
+    return types.Part.from_bytes(
+        data=uploaded_file.getvalue(),
+        mime_type=mime_type,
+    )
+
+
+def _response_text(response):
+    """Safely extract text without assuming every response part is text."""
+    text_parts = []
+    for candidate in response.candidates or []:
+        for part in candidate.content.parts or []:
+            text = getattr(part, "text", None)
+            if text:
+                text_parts.append(text)
+    return " ".join(text_parts).strip()
 
 
 class MediAssistAgent:
     def __init__(self):
-        # 1. Boot up the Google AI API using our secret key
-        genai.configure(api_key=config.GEMINI_API_KEY)
+        if not config.GEMINI_API_KEY:
+            raise RuntimeError("GEMINI_API_KEY is not configured.")
 
-        # 2. Create the Gemini AI Model instance
-        self.model = genai.GenerativeModel(
-            model_name=config.MODEL_NAME,
-            system_instruction=SYSTEM_PROMPT,
-            tools=_format_tools_for_gemini(),
-            generation_config=genai.types.GenerationConfig(
-                temperature=config.TEMPERATURE,
-                max_output_tokens=config.MAX_OUTPUT_TOKENS,
-            )
-        )
-
-        # 3. Attach our memory modules
+        self.client = genai.Client(api_key=config.GEMINI_API_KEY)
         self.session_memory = SessionMemory()
         self.persistent_memory = PersistentMemory()
 
-        # 4. Try to load the last conversation if we crashed or restarted
-        last_history = self.persistent_memory.load_last_session()
-        
-        # Convert our {"role": ..., "content": ...} dicts into Gemini format
-        gemini_history = []
-        for msg in last_history:
-            gemini_history.append({
-                "role": msg["role"],
-                "parts": [msg["content"]]
-            })
-        
-        # 5. Start the chat session
-        self._chat = self.model.start_chat(history=gemini_history)
+    def _generate(self, contents):
+        return self.client.models.generate_content(
+            model=config.MODEL_NAME,
+            contents=contents,
+            config=types.GenerateContentConfig(
+                system_instruction=SYSTEM_PROMPT,
+                tools=_tool_config(),
+                temperature=config.TEMPERATURE,
+                max_output_tokens=config.MAX_OUTPUT_TOKENS,
+                automatic_function_calling={"disable": True},
+            ),
+        )
 
     @with_api_failover
     def chat(self, user_message: str, uploaded_file=None) -> str:
-        """
-        Send a message (and an optional file), handle any tool calls loop, and get the final text response.
-        """
-        import tempfile
-        import os
-        from PIL import Image
-        
-        # Save user message to short-term memory (we just append a text note if a file was attached)
-        memory_text = user_message + (f"\n[User attached file: {uploaded_file.name}]" if uploaded_file else "")
-        self.session_memory.add_message("user", memory_text)
-
-        # Prepare the message parts for Gemini
-        message_parts = [user_message]
-
+        """Send a prompt, run any requested local tools, then return Gemini's reply."""
+        message_text = user_message
         if uploaded_file:
-            # If it's an image, Gemini can read it directly from memory via PIL
-            if uploaded_file.name.lower().endswith(('.png', '.jpg', '.jpeg')):
-                img = Image.open(uploaded_file)
-                message_parts.append(img)
-            # If it's a PDF, we must use the Google File API
-            elif uploaded_file.name.lower().endswith('.pdf'):
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-                    tmp.write(uploaded_file.getvalue())
-                    tmp_path = tmp.name
-                
-                # Upload the PDF to Google's servers so Gemini can read it
-                genai_file = genai.upload_file(path=tmp_path)
-                message_parts.append(genai_file)
-                
-                # Delete the local temp file to save space
-                os.unlink(tmp_path)
+            message_text += (
+                "\n\n[The user attached a medical report. Analyze the attached file "
+                "when it is relevant to the request.]"
+            )
 
-        # ── Layer 1: Web Search Keyword Pre-Filter ──
-        # Check if this query needs real-time info before sending to Gemini.
-        # If yes, hint Gemini that web_search is available.
-        # If no, tell Gemini NOT to call web_search (saves API calls).
-        msg_lower = user_message.lower()
-        needs_search = any(kw in msg_lower for kw in SEARCH_TRIGGER_KEYWORDS)
-        if needs_search:
-            search_hint = "\n\n[SYSTEM HINT: Web search is available if you need up-to-date information for this query.]"
-        else:
-            search_hint = "\n\n[SYSTEM HINT: Answer from your existing knowledge. Do NOT call web_search for this query.]"
+        needs_search = any(keyword in user_message.lower() for keyword in SEARCH_TRIGGER_KEYWORDS)
+        search_hint = (
+            "\n\n[SYSTEM HINT: Web search is available if you need up-to-date information.]"
+            if needs_search
+            else "\n\n[SYSTEM HINT: Answer from existing knowledge. Do NOT call web_search.]"
+        )
 
-        message_parts[0] = user_message + search_hint
+        current_parts = [types.Part.from_text(text=message_text + search_hint)]
+        if uploaded_file:
+            current_parts.append(_uploaded_file_part(uploaded_file))
 
-        # Send it to Gemini
-        response = self._chat.send_message(message_parts)
+        contents = _history_contents(self.session_memory.get_history())
+        contents.append(types.Content(role="user", parts=current_parts))
 
-        # ─── TOOL LOOP ───
-        while True:
-            # 1. Gather all function calls Gemini wants us to run right now
-            tool_responses = []
-            
-            for part in response.candidates[0].content.parts:
-                if hasattr(part, "function_call") and getattr(part.function_call, "name", ""):
-                    fn_call = part.function_call
-                    fn_name = fn_call.name
-                    fn_args = dict(fn_call.args)
-                    
-                    print(f"  [Agent is using tool: {fn_name} ...]")
-                    
-                    # Run the tool!
-                    tool_result_json_str = route_tool_call(fn_name, fn_args)
-                    
-                    # Package the result for Gemini
-                    tool_responses.append(
-                        genai.protos.Part(
-                            function_response=genai.protos.FunctionResponse(
-                                name=fn_name,
-                                response={"result": tool_result_json_str}
-                            )
-                        )
-                    )
+        max_turns = 5
+        for _ in range(max_turns):
+            response = self._generate(contents)
+            candidate = (response.candidates or [None])[0]
+            if not candidate or not candidate.content:
+                raise RuntimeError("Gemini returned no usable response.")
 
-            # 2. Did we find any tools to run?
-            if tool_responses:
-                # Send ALL the tool results back to Gemini at the exact same time
-                response = self._chat.send_message(
-                    genai.protos.Content(
-                        role="tool",
-                        parts=tool_responses
+            function_calls = [
+                part.function_call
+                for part in candidate.content.parts or []
+                if getattr(part, "function_call", None)
+                and getattr(part.function_call, "name", None)
+            ]
+
+            if not function_calls:
+                final_answer = _response_text(response) or "Done."
+                memory_text = user_message + (
+                    f"\n[User attached file: {uploaded_file.name}]" if uploaded_file else ""
+                )
+                self.session_memory.add_message("user", memory_text)
+                self.session_memory.add_message("model", final_answer)
+                self.persistent_memory.save_session(self.session_memory.get_history())
+                return final_answer
+
+            # Preserve Gemini's returned content (including tool-call context) before
+            # appending the tool results for the next model turn.
+            contents.append(candidate.content)
+            tool_results = []
+            for function_call in function_calls:
+                function_name = function_call.name
+                function_args = dict(function_call.args or {})
+                print(f"  [Gemini] using tool: {function_name} ...")
+                result_json = route_tool_call(function_name, function_args)
+                tool_results.append(
+                    types.Part.from_function_response(
+                        name=function_name,
+                        response={"result": result_json},
                     )
                 )
-            else:
-                # No more tools. Gemini just gave us a text string. The loop is done!
-                break
 
-        # Safely extract text (bypasses SDK ValueError if model hallucinates an empty function_call part alongside the text)
-        text_parts = []
-        for p in response.candidates[0].content.parts:
-            # Check if this part contains valid text
-            if hasattr(p, "text") and getattr(p, "text", ""):
-                text_parts.append(p.text)
-                
-        final_answer = " ".join(text_parts) if text_parts else "Done."
+            contents.append(types.Content(role="user", parts=tool_results))
 
-        # Save the final text and flush short-term memory to long-term memory file
-        self.session_memory.add_message("model", final_answer)
-        self.persistent_memory.save_session(self.session_memory.get_history())
-
-        return final_answer
+        raise RuntimeError("Gemini reached the maximum number of tool-call turns.")
 
     def reset_session(self):
-        """Wipes the short term memory to start a fresh conversation."""
+        """Wipe short-term memory to start a new conversation."""
         self.session_memory.clear()
-        self._chat = self.model.start_chat(history=[])
