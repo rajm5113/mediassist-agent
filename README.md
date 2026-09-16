@@ -23,7 +23,7 @@ When you open the app, you'll see a **dark-themed chat interface** where you can
 ### 🤖 AI & Intelligence
 | Feature | Description |
 |---|---|
-| **Multi-model Support** | Switch between Gemini 2.5 Flash, Groq Llama 3.3 70B, Groq Llama 3.1 8B, or OpenRouter Llama 3 8B from the sidebar — **no restart needed** |
+| **Multi-model Support** | Switch between Gemini 2.5 Flash, Groq GPT-OSS 120B, Groq GPT-OSS 20B, or an available OpenRouter free model from the sidebar — **no restart needed** |
 | **3-Tier Auto-Failover** | If Gemini's quota is hit, the agent automatically falls back to Groq, then OpenRouter — you'll never see a blank answer |
 | **Autonomous Tool Calling** | The AI decides which tool to run (drug lookup, symptom log, web search, etc.) based on what you say — no buttons to click |
 | **Proactive Symptom Logging** | Just say *"I have a headache, severity 6"* and it immediately saves it without you having to ask |
@@ -156,9 +156,13 @@ GEMINI_API_KEY="AIzaSy...your-key-here"
 
 # Optional — enables Groq fallback + Whisper voice transcription
 GROQ_API_KEY="gsk_...your-key-here"
+# Optional model override; defaults to openai/gpt-oss-20b
+GROQ_MODEL="openai/gpt-oss-20b"
 
 # Optional — enables OpenRouter fallback
 OPENROUTER_API_KEY="sk-or-v1-...your-key-here"
+# Optional model override; defaults to OpenRouter's free-model router
+OPENROUTER_MODEL="openrouter/free"
 ```
 
 > **Note:** The `.env` file is in `.gitignore` — it will **never** be uploaded to GitHub. Keep your keys safe.
@@ -207,7 +211,7 @@ Once the app is running, paste these into the chat to test each feature:
 
 - **This is not a substitute for medical advice.** MediAssist is an AI tool for productivity and information lookup only. Always consult a licensed healthcare provider for diagnosis or treatment.
 - **Your data stays local.** All symptoms and reminders are saved to `data/memory_store.json` on your own machine — nothing is sent to any external server except the LLM APIs.
-- **The Gemini package will show a `FutureWarning`** about the deprecated `google.generativeai` SDK. The app works perfectly despite this warning — migration to the new SDK is a planned improvement.
+- **The app uses the maintained `google-genai` SDK** for Gemini. Keep dependencies updated with `pip install -r requirements.txt`.
 
 ---
 
