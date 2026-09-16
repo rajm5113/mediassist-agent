@@ -64,9 +64,9 @@ with st.sidebar:
     # supports_tools=False → skip tool calling (plain chat only)
     MODEL_OPTIONS = {
         "🔮 Gemini 2.5 Flash (Default)": ("gemini", None, True),
-        "⚡ Groq — Llama 3.3 70B":        ("groq", "llama-3.3-70b-versatile", True),
-        "🚀 Groq — Llama 3.1 8B (Fast)":  ("groq", "llama-3.1-8b-instant", True),
-        "🌐 OpenRouter — Llama 3 8B (Free)": ("openrouter", "meta-llama/llama-3-8b-instruct:free", False),
+        "⚡ Groq — GPT-OSS 120B":          ("groq", "openai/gpt-oss-120b", True),
+        "🚀 Groq — GPT-OSS 20B (Fast)":    ("groq", "openai/gpt-oss-20b", True),
+        "🌐 OpenRouter — Available Free Model": ("openrouter", config.OPENROUTER_MODEL, False),
     }
 
     selected_model_label = st.selectbox(
@@ -127,7 +127,7 @@ with st.sidebar:
         st.info("Tell me something like 'I have a headache, severity 6' to start your tracking chart!")
 
     st.write("---")
-    st.caption("Built with Gemini 2.5 Flash & Streamlit")
+    st.caption("Built with Gemini, Groq & Streamlit")
 
 # ─── 4. MAIN CHAT INTERFACE ───
 st.title("Hi, I'm MediAssist! 👋")
