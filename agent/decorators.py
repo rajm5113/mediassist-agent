@@ -1,61 +1,59 @@
 """
-agent/decorators.py — Advanced Python Error Handling
+agent/decorators.py — Provider failover for MediAssist.
 
-🎓 WHAT IS A DECORATOR?
-   A decorator wraps around another function to modify its behavior without changing the core function code.
-   We use `@with_api_failover` to "wrap" the main chat function. If the chat function crashes, the decorator catches it and instantly redirects traffic to a backup API!
+A provider failure (including an unavailable model, invalid key, quota limit, or
+temporary service error) moves to the next configured provider.
 """
 
 import functools
-import openai
-from google.api_core import exceptions as google_exceptions
+
+
+def _save_fallback_answer(agent, user_message: str, answer: str) -> str:
+    """Persist a fallback reply without duplicating the active user message."""
+    history = agent.session_memory.get_history()
+    if not history or history[-1].get("role") != "user" or history[-1].get("content") != user_message:
+        agent.session_memory.add_message("user", user_message)
+    agent.session_memory.add_message("model", answer)
+    agent.persistent_memory.save_session(agent.session_memory.get_history())
+    return answer
+
 
 def with_api_failover(func):
-    """
-    Decorator that implements a 3-tier provider failover:
-    1. Gemini
-    2. Fallback to Groq
-    3. Fallback to OpenRouter (Emergency)
-    """
+    """Try Gemini, then Groq, then OpenRouter for any provider-level failure."""
+
     @functools.wraps(func)
     def wrapper(self, user_message: str, uploaded_file=None, *args, **kwargs):
         try:
-            # 1. PRIMARY ROUTE: Try the main Gemini function
             return func(self, user_message, uploaded_file, *args, **kwargs)
-            
-        except google_exceptions.ResourceExhausted:
-            # 2. SECONDARY ROUTE: Gemini failed. Hit Groq.
-            print("  ⚠️ [Cascade] Gemini Quota hit. Trying Groq...")
+        except Exception as gemini_error:
+            print(f"  ⚠️ [Cascade] Gemini failed: {gemini_error}. Trying Groq...")
             from agent.llm_client import run_groq_fallback, run_openrouter_fallback
-            
+
             try:
-                fallback_answer = run_groq_fallback(self.session_memory.get_history(), user_message)
-                self.session_memory.add_message("model", fallback_answer)
-                self.persistent_memory.save_session(self.session_memory.get_history())
-                return fallback_answer
-                
-            except openai.APIStatusError as groq_err:
-                # 3. TERTIARY ROUTE: Groq failed (like Error 413 or 429). Hit OpenRouter.
-                if groq_err.status_code in [413, 429]:
-                    print("  ⚠️ [Cascade] Groq Rate Limit hit. Failing over to OpenRouter...")
-                    try:
-                        or_answer = run_openrouter_fallback(self.session_memory.get_history(), user_message)
-                        self.session_memory.add_message("model", or_answer)
-                        self.persistent_memory.save_session(self.session_memory.get_history())
-                        return or_answer
-                    except Exception as or_err:
-                        err_msg = f"⚠️ **Total Failover:** All AI providers hit their limits. Final error: `{str(or_err)}`"
-                        self.session_memory.add_message("model", err_msg)
-                        return err_msg
-                else:
-                    err_msg = f"⚠️ **Groq API Error:** `{str(groq_err)}`"
-                    self.session_memory.add_message("model", err_msg)
-                    return err_msg
-                    
-        except Exception as e:
-            # Catch all other random code crashes
-            err_msg = f"⚠️ **System Error:** `{str(e)}`"
-            self.session_memory.add_message("model", err_msg)
-            return err_msg
-            
+                groq_answer = run_groq_fallback(
+                    self.session_memory.get_history(),
+                    user_message,
+                )
+                return _save_fallback_answer(self, user_message, groq_answer)
+            except Exception as groq_error:
+                print(f"  ⚠️ [Cascade] Groq failed: {groq_error}. Trying OpenRouter...")
+
+                try:
+                    openrouter_answer = run_openrouter_fallback(
+                        self.session_memory.get_history(),
+                        user_message,
+                    )
+                    return _save_fallback_answer(self, user_message, openrouter_answer)
+                except Exception as openrouter_error:
+                    error_message = (
+                        "⚠️ **AI service unavailable:** All configured providers failed. "
+                        "Please try again shortly."
+                    )
+                    print(
+                        "  ⚠️ [Cascade] All providers failed — "
+                        f"Gemini: {gemini_error}; Groq: {groq_error}; "
+                        f"OpenRouter: {openrouter_error}"
+                    )
+                    return _save_fallback_answer(self, user_message, error_message)
+
     return wrapper
