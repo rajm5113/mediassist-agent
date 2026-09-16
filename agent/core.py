@@ -62,14 +62,15 @@ def _response_text(response):
 
 class MediAssistAgent:
     def __init__(self):
-        if not config.GEMINI_API_KEY:
-            raise RuntimeError("GEMINI_API_KEY is not configured.")
-
-        self.client = genai.Client(api_key=config.GEMINI_API_KEY)
+        # Keep the UI usable when Gemini is not configured; the failover
+        # decorator can still serve Groq or OpenRouter responses.
+        self.client = genai.Client(api_key=config.GEMINI_API_KEY) if config.GEMINI_API_KEY else None
         self.session_memory = SessionMemory()
         self.persistent_memory = PersistentMemory()
 
     def _generate(self, contents):
+        if not self.client:
+            raise RuntimeError("GEMINI_API_KEY is not configured.")
         return self.client.models.generate_content(
             model=config.MODEL_NAME,
             contents=contents,
