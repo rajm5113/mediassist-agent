@@ -67,9 +67,8 @@ def run_groq_fallback(session_history, user_message: str, model: str | None = No
     Connects to Groq using a current tool-capable model.
     The default can be overridden with the GROQ_MODEL environment variable.
     """
-    import openai as openai_module
     if not config.GROQ_API_KEY:
-        raise openai_module.APIStatusError(message="Groq API key not found", response=None, body=None)
+        raise RuntimeError("GROQ_API_KEY is not configured.")
 
     model = model or config.GROQ_MODEL
     client = OpenAI(api_key=config.GROQ_API_KEY, base_url="https://api.groq.com/openai/v1")
