@@ -26,7 +26,9 @@ GROQ_API_KEY       = os.getenv("GROQ_API_KEY", "")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 
 # ── Model Settings ───────────────────────────────────────────────────────────
-MODEL_NAME        = "gemini-2.5-flash"   # Which Gemini model to use
+MODEL_NAME        = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+GROQ_MODEL        = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b")
+OPENROUTER_MODEL  = os.getenv("OPENROUTER_MODEL", "openrouter/free")
 TEMPERATURE       = 0.7                  # 0 = precise, 1 = creative
 MAX_OUTPUT_TOKENS = 2048                 # Max length of response
 
