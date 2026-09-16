@@ -203,7 +203,7 @@ Once the app is running, paste these into the chat to test each feature:
 |---|---|---|
 | `GEMINI_API_KEY` | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) | Free tier available |
 | `GROQ_API_KEY` | [console.groq.com/keys](https://console.groq.com/keys) | Free tier (generous limits) |
-| `OPENROUTER_API_KEY` | [openrouter.ai/keys](https://openrouter.ai/keys) | Free tier (Llama 3 8B is free) |
+| `OPENROUTER_API_KEY` | [openrouter.ai/keys](https://openrouter.ai/keys) | Optional free-model router; availability and limits vary |
 
 ---
 
